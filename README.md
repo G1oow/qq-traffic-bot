@@ -1,6 +1,6 @@
 # QQ Sing-box 流量监控
 
-一个运行在 Linux VPS 上的 Go 单进程服务。它读取 nftables 中 `perip4/hitv4` 和 `perip6/hitv6` 的逐 IP 计数，通过 QQ 开放平台官方 WebSocket Gateway 接收 C2C 指令，并在流量异常时主动报警。
+一个轻量、低资源占用的 Linux VPS Go 单进程服务。它读取 nftables 中 `perip4/hitv4` 和 `perip6/hitv6` 的逐 IP 计数，通过 QQ 开放平台官方 WebSocket Gateway 接收 C2C 指令，并在流量异常时主动报警。
 
 ## 功能
 
@@ -11,6 +11,24 @@
 - 报告仅显示查询窗口内流量达到 1 MiB 的 IP，展示 Top 15，其余 IP 合并统计。
 - 首个发送 C2C 消息的用户会被绑定为主动报警接收人。
 - SQLite 数据默认保留 7 天；流量库超过 500 MiB 时自动清理至 450 MiB 以下。
+
+## 实机资源占用
+
+以下数据来自服务在单核 VPS 上的实际运行采样：
+
+| 资源 | 实测占用 |
+| --- | ---: |
+| CPU（15 秒平均） | 0.266% |
+| RAM（systemd cgroup） | 13.0 MiB |
+| RAM 峰值 | 14.8 MiB |
+| 进程 RSS / PSS | 18.8 MiB / 18.8 MiB |
+| 项目磁盘总占用 | 11.6 MiB |
+| Go 二进制 | 10.7 MiB |
+| SQLite 数据 | 0.87 MiB |
+| 线程数 | 7 |
+| 服务重启次数 | 0 |
+
+`systemd` cgroup、RSS 和 PSS 使用不同的统计口径，且采样时刻可能不同，因此内存数值不应直接相减。实际占用会随活跃 IP 数量、SQLite 数据量和查询频率变化。
 
 ## 前置条件
 
