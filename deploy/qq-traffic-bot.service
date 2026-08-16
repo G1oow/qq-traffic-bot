@@ -1,0 +1,24 @@
+[Unit]
+Description=QQ sing-box per-IP traffic monitor
+After=network-online.target nft-perip.service
+Wants=network-online.target
+Requires=nft-perip.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+UMask=0077
+WorkingDirectory=/opt/qq-traffic-bot
+EnvironmentFile=/opt/qq-traffic-bot/.env
+ExecStart=/opt/qq-traffic-bot/qq-traffic-bot
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/opt/qq-traffic-bot/data
+
+[Install]
+WantedBy=multi-user.target
