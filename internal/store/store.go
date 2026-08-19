@@ -35,12 +35,14 @@ type PendingAlert struct {
 }
 
 type Store struct {
-	baseDir string
-	loc     *time.Location
-	state   *sql.DB
-	mu      sync.Mutex
-	day     string
-	dayDB   *sql.DB
+	baseDir   string
+	loc       *time.Location
+	state     *sql.DB
+	mu        sync.Mutex
+	day       string
+	dayDB     *sql.DB
+	extraMu   sync.Mutex
+	extraDBs  map[string]*sql.DB
 }
 
 func New(baseDir string, loc *time.Location) (*Store, error) {
@@ -55,7 +57,7 @@ func New(baseDir string, loc *time.Location) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Store{baseDir: absolute, loc: loc, state: state}
+	s := &Store{baseDir: absolute, loc: loc, state: state, extraDBs: make(map[string]*sql.DB)}
 	if err := s.initState(); err != nil {
 		state.Close()
 		return nil, err
@@ -126,6 +128,13 @@ func (s *Store) Close() error {
 		errs = append(errs, s.dayDB.Close())
 	}
 	errs = append(errs, s.state.Close())
+
+	s.extraMu.Lock()
+	for _, db := range s.extraDBs {
+		errs = append(errs, db.Close())
+	}
+	s.extraDBs = nil
+	s.extraMu.Unlock()
 	return errors.Join(errs...)
 }
 
@@ -386,7 +395,7 @@ func (s *Store) Query(ctx context.Context, start, end time.Time) (map[string]uin
 			}
 			return nil, err
 		}
-		db, err := openDB(path)
+		db, err := s.openQueryDB(path)
 		if err != nil {
 			return nil, err
 		}
@@ -395,7 +404,7 @@ SELECT ip, SUM(bytes) FROM traffic
 WHERE bucket >= ? AND bucket <= ?
 GROUP BY ip`, start.Truncate(time.Minute).Unix(), end.Unix())
 		if err != nil {
-			db.Close()
+			rows.Close()
 			return nil, err
 		}
 		for rows.Next() {
@@ -403,7 +412,6 @@ GROUP BY ip`, start.Truncate(time.Minute).Unix(), end.Unix())
 			var bytes int64
 			if err := rows.Scan(&ip, &bytes); err != nil {
 				rows.Close()
-				db.Close()
 				return nil, err
 			}
 			if bytes > 0 {
@@ -412,13 +420,36 @@ GROUP BY ip`, start.Truncate(time.Minute).Unix(), end.Unix())
 		}
 		err = rows.Err()
 		rows.Close()
-		db.Close()
 		if err != nil {
 			return nil, err
 		}
 		day = day.AddDate(0, 0, 1)
 	}
 	return result, nil
+}
+
+func (s *Store) openQueryDB(path string) (*sql.DB, error) {
+	s.extraMu.Lock()
+	defer s.extraMu.Unlock()
+	if db, ok := s.extraDBs[path]; ok {
+		return db, nil
+	}
+	db, err := openDB(path)
+	if err != nil {
+		return nil, err
+	}
+	s.extraDBs[path] = db
+	return db, nil
+}
+
+func (s *Store) dropQueryDB(name string) {
+	path := filepath.Join(s.baseDir, name)
+	s.extraMu.Lock()
+	defer s.extraMu.Unlock()
+	if db, ok := s.extraDBs[path]; ok {
+		_ = db.Close()
+		delete(s.extraDBs, path)
+	}
 }
 
 func midnight(t time.Time) time.Time {
@@ -535,6 +566,7 @@ func (s *Store) Cleanup(now time.Time) error {
 	kept := files[:0]
 	for _, file := range files {
 		if file.day.Before(cutoff) && file.day.Format("2006-01-02") != current {
+			s.dropQueryDB(file.name)
 			if err := removeTrafficFile(s.baseDir, file.name); err != nil {
 				return err
 			}
@@ -557,6 +589,7 @@ func (s *Store) Cleanup(now time.Time) error {
 		if file.day.Format("2006-01-02") == current {
 			continue
 		}
+		s.dropQueryDB(file.name)
 		if err := removeTrafficFile(s.baseDir, file.name); err != nil {
 			return err
 		}
