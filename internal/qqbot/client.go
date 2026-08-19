@@ -22,8 +22,7 @@ import (
 )
 
 const (
-	apiBase           = "https://api.bot.qq.com"
-	accessTokenURL    = apiBase + "/app/getAppAccessToken"
+	defaultAPIBase    = "https://api.bot.qq.com"
 	groupAndC2CIntent = 1 << 25
 )
 
@@ -55,23 +54,30 @@ type Handler func(context.Context, Message)
 type Client struct {
 	appID      string
 	secret     string
+	apiBase    string
 	httpClient *http.Client
 	tokens     tokenManager
 	seq        atomic.Int64
+	replySeq   atomic.Int64
 	mu         sync.Mutex
 	sessionID  string
 }
 
 func New(appID, secret string) *Client {
 	c := &Client{
-		appID:  appID,
-		secret: secret,
-		httpClient: &http.Client{
-			Timeout: 20 * time.Second,
-		},
+		appID:      appID,
+		secret:     secret,
+		apiBase:    defaultAPIBase,
+		httpClient: &http.Client{Timeout: 20 * time.Second},
 	}
 	c.seq.Store(-1)
 	c.tokens.client = c
+	return c
+}
+
+func NewWithAPIBase(apiBase, appID, secret string) *Client {
+	c := New(appID, secret)
+	c.apiBase = apiBase
 	return c
 }
 
@@ -259,7 +265,7 @@ type envelope struct {
 }
 
 func (c *Client) gateway(ctx context.Context, token string) (string, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, apiBase+"/gateway", nil)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, c.apiBase+"/gateway", nil)
 	if err != nil {
 		return "", err
 	}
@@ -281,7 +287,7 @@ func (c *Client) SendReply(ctx context.Context, openID, messageID, content strin
 		"content":  content,
 		"msg_type": 0,
 		"msg_id":   messageID,
-		"msg_seq":  1,
+		"msg_seq":  c.replySeq.Add(1),
 	}
 	return c.send(ctx, openID, payload)
 }
@@ -303,7 +309,7 @@ func (c *Client) send(ctx context.Context, openID string, payload map[string]any
 	if err != nil {
 		return err
 	}
-	endpoint := apiBase + "/v2/users/" + url.PathEscape(openID) + "/messages"
+	endpoint := c.apiBase + "/v2/users/" + url.PathEscape(openID) + "/messages"
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return err
@@ -350,7 +356,7 @@ func (m *tokenManager) Get(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, accessTokenURL, bytes.NewReader(body))
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, m.client.apiBase+"/app/getAppAccessToken", bytes.NewReader(body))
 	if err != nil {
 		return "", err
 	}
